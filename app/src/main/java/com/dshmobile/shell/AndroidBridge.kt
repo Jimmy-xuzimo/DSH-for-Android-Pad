@@ -24,6 +24,10 @@ class AndroidBridge(
   private val onOpenConsole: () -> Unit = {},
   private val onGetDevLogEnabled: () -> Boolean = { false },
   private val onSetDevLogEnabled: (Boolean) -> Unit = {},
+  // Android 16 平板适配：窗口模式/屏幕信息/方向控制（Web UI 插件响应式布局用）。
+  private val onGetWindowMode: () -> String = { "phone" },
+  private val onGetScreenInfo: () -> String = { "{}" },
+  private val onSetOrientation: (String) -> Unit = {},
 ) {
 
   @JavascriptInterface
@@ -102,6 +106,30 @@ class AndroidBridge(
   @JavascriptInterface
   fun setDevLogEnabled(enabled: Boolean) {
     onSetDevLogEnabled(enabled)
+  }
+
+  /**
+   * 当前窗口模式（Android 16 平板/桌面窗口适配）：phone / tablet /
+   * desktop（多窗口或桌面窗口模式）。Web UI 插件据此切换响应式布局。
+   */
+  @JavascriptInterface
+  fun getWindowMode(): String = onGetWindowMode()
+
+  /**
+   * 屏幕与窗口信息 JSON：{widthPx, heightPx, density, widthDp, heightDp,
+   * smallestWidthDp, isTablet, isMultiWindow}。Web UI 插件用于大屏/分屏/
+   * 自由窗口下的触控与布局优化。
+   */
+  @JavascriptInterface
+  fun getScreenInfo(): String = onGetScreenInfo()
+
+  /**
+   * 锁定/解锁屏幕方向：portrait / landscape / auto（跟随系统）。
+   * 平板桌面窗口模式下建议 auto（窗口自由缩放，方向由窗口形状决定）。
+   */
+  @JavascriptInterface
+  fun setOrientation(mode: String) {
+    onSetOrientation(mode)
   }
 
   companion object {

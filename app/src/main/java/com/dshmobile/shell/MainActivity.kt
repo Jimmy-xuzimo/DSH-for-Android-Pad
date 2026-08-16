@@ -41,6 +41,10 @@ class MainActivity : ComponentActivity() {
 
   private lateinit var webView: WebView
   private lateinit var guideView: LinearLayout
+  /** Android 16 平板适配：宽屏/桌面窗口模式下 WebView 居中容器（限宽）。 */
+  private lateinit var webContainer: FrameLayout
+  /** 根布局（applyTabletLayout 改背景色用）。 */
+  private lateinit var root: FrameLayout
   /** 目录选择桥鉴权 token（进程级共享：MainActivity 重建/看门狗重启不更换，
    *  与引擎 env 的 DSH_PICK_TOKEN 始终一致；C1 修复）。 */
   private val pickToken: String = EngineManager.ensurePickToken()
@@ -160,12 +164,18 @@ class MainActivity : ComponentActivity() {
       LogCollector.start(this)
       LogCollector.log("dsh-shell", "app onCreate (dev log on)")
     }
-    val root = FrameLayout(this)
+    root = FrameLayout(this)
     webView = WebView(this).apply { id = View.generateViewId() }
-    root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    // Android 16 平板适配：WebView 包一层居中容器，宽屏/桌面窗口模式下
+    // 限宽居中（桌面浏览器体验），手机/窄窗口下全屏。
+    webContainer = FrameLayout(this).apply {
+      addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+    root.addView(webContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     guideView = buildGuideView()
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
+    applyTabletLayout()
     configureWebView()
     // Testable update trigger: adb am start -n .../.MainActivity -a com.dshmobile.shell.action.UPDATE
     if (intent?.action == ACTION_UPDATE) {
@@ -223,7 +233,84 @@ class MainActivity : ComponentActivity() {
 
   override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
     super.onConfigurationChanged(newConfig)
+    // 桌面窗口模式拖动边缘/分屏/旋转：重算平板布局 + 重推主题。
+    applyTabletLayout()
     pushSystemDark(webView)
+  }
+
+  /** Android 16 桌面窗口模式（Desktop Windowing）进入/退出回调。 */
+  override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: android.content.res.Configuration) {
+    super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+    applyTabletLayout()
+    pushSystemDark(webView)
+  }
+
+  /**
+   * Android 16 平板/桌面窗口模式适配：宽屏（sw600dp+）或桌面窗口模式下，
+   * WebView 容器居中显示并限制最大宽度（模拟桌面浏览器体验），两侧留深色
+   * 背景；手机/窄窗口下恢复全屏。窗口尺寸变化（拖动边缘/分屏/旋转）时由
+   * onConfigurationChanged / onMultiWindowModeChanged 触发重算。
+   */
+  private fun applyTabletLayout() {
+    if (!::webContainer.isInitialized || !::root.isInitialized) return
+    val isTablet = resources.configuration.smallestScreenWidthDp >= 600
+    val isDesktop = isInMultiWindowMode()
+    val wide = isTablet || isDesktop
+    val lp = webContainer.layoutParams as FrameLayout.LayoutParams
+    if (wide) {
+      // 桌面浏览器式：内容区限宽居中，两侧深色背景（与 dsh 深色主题一致）。
+      val maxWidth = (1280 * resources.displayMetrics.density).toInt()
+      val screenW = resources.displayMetrics.widthPixels
+      lp.width = minOf(maxWidth, screenW)
+      lp.gravity = android.view.Gravity.CENTER
+      root.setBackgroundColor(0xFF0f1720.toInt())
+    } else {
+      lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+      lp.gravity = android.view.Gravity.NO_GRAVITY
+      root.setBackgroundColor(0xFFFFFFFF.toInt())
+    }
+    webContainer.layoutParams = lp
+  }
+
+  /** 窗口模式判定（Android 16 平板/桌面窗口适配，供 JS 桥）。 */
+  private fun getWindowMode(): String {
+    val isTablet = resources.configuration.smallestScreenWidthDp >= 600
+    val isMulti = isInMultiWindowMode()
+    return when {
+      isMulti -> "desktop"
+      isTablet -> "tablet"
+      else -> "phone"
+    }
+  }
+
+  /** 屏幕与窗口信息 JSON（Web UI 插件响应式布局用）。 */
+  private fun getScreenInfoJson(): String {
+    val dm = resources.displayMetrics
+    val cfg = resources.configuration
+    val json = org.json.JSONObject()
+    return try {
+      json.put("widthPx", dm.widthPixels)
+      json.put("heightPx", dm.heightPixels)
+      json.put("density", dm.density)
+      json.put("widthDp", (dm.widthPixels / dm.density).toInt())
+      json.put("heightDp", (dm.heightPixels / dm.density).toInt())
+      json.put("smallestWidthDp", cfg.smallestScreenWidthDp)
+      json.put("isTablet", cfg.smallestScreenWidthDp >= 600)
+      json.put("isMultiWindow", isInMultiWindowMode())
+      json.toString()
+    } catch (_: Exception) {
+      "{}"
+    }
+  }
+
+  /** 屏幕方向控制：portrait / landscape / auto（跟随系统）。 */
+  private fun setOrientation(mode: String) {
+    val orientation = when (mode) {
+      "portrait" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+      "landscape" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+      else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+    requestedOrientation = orientation
   }
 
   override fun onBackPressed() {
@@ -344,6 +431,10 @@ class MainActivity : ComponentActivity() {
             showTestNotification("开发者日志已关闭", "日志收集已停止")
           }
         },
+        // Android 16 平板适配：窗口模式/屏幕信息/方向控制桥。
+        onGetWindowMode = { getWindowMode() },
+        onGetScreenInfo = { getScreenInfoJson() },
+        onSetOrientation = { mode -> setOrientation(mode) },
       ),
       "androidBridge",
     )

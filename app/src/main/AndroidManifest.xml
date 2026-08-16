@@ -12,17 +12,28 @@
     android:label="@string/app_name"
     android:icon="@mipmap/ic_launcher"
     android:theme="@style/Theme.Dsh"
-    android:usesCleartextTraffic="true">
+    android:usesCleartextTraffic="true"
+    android:supportsRtl="true">
 
     <service
       android:name=".EngineService"
       android:exported="false"
       android:foregroundServiceType="dataSync" />
 
+    <!-- Android 16 平板深度适配：
+         - resizeableActivity=true：显式声明支持自由调整窗口大小（桌面窗口模式
+           Desktop Windowing / 分屏 / 自由窗口），10 英寸以上平板可任意缩放；
+         - configChanges 覆盖 density|smallestScreenSize|fontScale：桌面窗口
+           模式下拖动窗口边缘改变尺寸/密度时 Activity 不重建，WebView 会话
+           与引擎桥保持连续（避免重建导致 WebUI 重载、JS 桥丢失）；
+         - enableOnBackInvokedCallback：Android 13+ 预测性返回手势，平板
+           桌面窗口模式下返回动画与系统一致。 -->
     <activity
       android:name=".MainActivity"
       android:exported="true"
-      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+      android:resizeableActivity="true"
+      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize|fontScale"
+      android:enableOnBackInvokedCallback="true"
       android:windowSoftInputMode="adjustResize">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
@@ -34,7 +45,9 @@
     <activity
       android:name=".ConsoleActivity"
       android:exported="false"
-      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+      android:resizeableActivity="true"
+      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize|fontScale"
+      android:enableOnBackInvokedCallback="true"
       android:windowSoftInputMode="adjustResize" />
   </application>
 </manifest>

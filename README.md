@@ -1,78 +1,76 @@
-# dsh-mobile-apk — DeepSeek Harness Android Shell APK
+# dsh-mobile-android16
 
-![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-blue?style=flat&logo=DeepSeek&logoSize=auto&color=%232D5F9E)
-![Android](https://img.shields.io/badge/Android-blue?style=flat&logo=Android&logoSize=auto&color=%2397CA00)
+**DeepSeek Harness (dsh) 原生移植至 Android 16 平板** —— 基于 `dsh-mobile-apk` 的深度定制版。
 
+将 DeepSeek Harness 的"一切皆插件"架构完整移植到 Android 16 (API 36) 平板，提供开箱即用的原生体验：内嵌运行时快照（Node.js + bash + coreutils + dsh 本体）、WebView 承载 dsh Web UI、JS Bridge 双向通信、前台服务保活 + 看门狗、清单驱动在线快照更新、SAF 目录桥接。
 
-> **dsh-mobile 生态** · [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux)（shell）· [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive)（移动 UI）· [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat)（浏览器兼容）
+## 特性
 
-Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): WebView UI
-over an **embedded Termux runtime snapshot** (extract-and-run, no Termux app needed), SAF directory
-bridge, keep-alive foreground service, engine watchdog, and online runtime updates. One APK to
-install: it boots a full dsh web agent that can really execute bash.
+- **开箱即用**：APK 直接安装，首次启动自动解压运行时快照（~75MB，约 10 秒），不依赖 Termux 等外部环境
+- **Android 16 桌面窗口模式适配**：`resizeableActivity` + 扩展 `configChanges`，窗口自由缩放/分屏/旋转不重建 Activity
+- **平板限宽布局**：sw600dp+ 或桌面窗口模式下 WebView 限宽居中（最大 1280dp），模拟桌面浏览器体验
+- **JS Bridge 环境感知**：`getWindowMode()` / `getScreenInfo()` / `setOrientation()` 供 Web UI 插件实现响应式布局
+- **核心功能完整**：dsh web 服务、headless 模式、插件管理、HMR（`--expose-internals`）、node-pty 子进程/PTY、会话持久化
+- **后台保活**：前台服务 + 看门狗自动重启异常退出的引擎进程
+- **在线更新**：清单驱动的运行时快照更新，不更新 APK 即可单独升级 dsh 引擎与插件
+- **文件访问**：SAF (Storage Access Framework) 目录桥接，安全访问平板存储
 
-## Features
+## 目录结构
 
-- **Embedded runtime** — ships a ~70MB xz snapshot (node + bash + coreutils + dsh + plugins);
-  first launch extracts in ~10s and starts the engine from the app's own files; fully offline.
-- **Mobile UI** — system WebView over `http://127.0.0.1:3080` with the responsive plugin
-  (drawer/sheet on phones).
-- **Keep-alive** — foreground service ("dsh 引擎运行中") + 5s watchdog that restarts a dead engine.
-- **Online runtime updates** — manifest-driven snapshot swap (download → sha256 → atomic switch →
-  auto-restart); the running runtime can update itself without an APK update.
-- **SAF bridge** — `pickDirectory` maps the picked tree to a real path (`/storage/emulated/0/…`).
-
-## Build
-
-Requirements: JDK 17+, Android SDK (compileSdk 36); Gradle 8.11.1 via wrapper.
-
-```sh
-# 1. Prepare the runtime snapshot (required, ~70MB, distributed as a Release asset)
-#    Option A: download snapshot-x86_64.tar.xz from GitHub Releases
-#    Option B: build on a Termux device (scripts/make-snapshot.sh) and pull it
-mkdir -p app/src/main/assets
-cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
-
-# 2. Build (fails loudly when the snapshot is missing)
-./gradlew assembleDebug
-# output: app/build/outputs/apk/debug/app-debug.apk
+```
+dsh-mobile-android16/
+├── app/                          # Android 工程源码
+│   └── src/main/
+│       ├── java/com/dshmobile/shell/   # MainActivity / EngineService / AndroidBridge 等
+│       └── assets/               # 运行时快照（snapshot.tar.xz，构建时放入）
+├── docs/
+│   └── DeepSeek-Harness-Android16-移植技术方案.md   # 完整技术方案
+├── releases/
+│   └── dsh-mobile-a16-tablet-arm64.apk             # 可直接安装的 APK
+├── gradle/                       # Gradle wrapper
+├── build.gradle.kts
+├── settings.gradle.kts
+├── gradle.properties
+├── README.md
+└── LICENSE                       # MIT
 ```
 
-## Bridge protocol v1 (`window.androidBridge`)
+## 构建
 
-| method | signature | description |
-|---|---|---|
-| `version` | getter → string | bridge protocol version (`"1.0"`) for feature detection |
-| `checkEngine` | () → string | probes 127.0.0.1:3080; JSON `{running, latencyMs}` |
-| `keepScreenOn` | (enable: boolean) | screen-on wake lock |
-| `showNotification` | (title, text) | test notification channel (POST_NOTIFICATIONS) |
-| `pickDirectory` | (callbackId: string) | SAF tree picker; result async via `window.__dshBridge.onDirectoryPicked(callbackId, path)` |
+环境要求：JDK 17、Android SDK（platform 36 / build-tools 36.0.0）、Gradle 8.13。
 
-The bridge decouples the APK from the dsh version: pages feature-detect on `androidBridge.version`.
+```powershell
+# 1. 配置 local.properties 指向本地 SDK
+# sdk.dir=C:/path/to/android-sdk
 
-## Online update protocol
+# 2. 将运行时快照放入 assets（arm64 平板 ABI）
+# 快照来源：dsh-mobile-apk 项目 releases 的 snapshot-arm64.tar.xz
+# 并更新 app/src/main/assets/snapshot.sha256 为对应 SHA-256
 
-1. App fetches `manifest.json`: `{url, sha256, size}` (default `http://10.0.2.2:8899/manifest.json`
-   for emulator testing; production points at a release server);
-2. Downloads the snapshot, verifies SHA-256, extracts to a staging dir (never touching the live tree),
-   atomically swaps `usr` → `usr-old` → new `usr`, then kills the old engine — the watchdog
-   restarts it from the new runtime.
+# 3. 构建
+gradle assembleRelease
+```
 
-Test trigger: `adb shell am start -n com.dshmobile.shell/.MainActivity -a com.dshmobile.shell.action.UPDATE`;
-status is written to `files/update-status.txt`. Test server: `node scripts/snapshot-server.mjs`.
+产物：`app/build/outputs/apk/release/app-release.apk`（release 已配置 debug 签名，可直接安装）。
 
-## Permissions
+## 安装
 
-`INTERNET` (WebView + engine probe), `POST_NOTIFICATIONS` (notification channel),
-`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` (keep-alive). SAF picking needs no permission.
+```powershell
+adb install -r releases/dsh-mobile-a16-tablet-arm64.apk
+```
 
-## ABI & pagesize
+或直接拷贝 APK 到平板点击安装。
 
-The x86_64 snapshot is verified end-to-end. arm64 snapshots are assembled from the official
-Termux aarch64 repo (see docs/design.md §ABI); a 16KB-page build must be produced on a 16KB device.
-APKs are per-ABI (the snapshot inside is arch-specific).
+## 首次使用
 
-## License
+1. 打开 dsh 应用，首次启动自动解压运行时快照（约 10 秒）
+2. 引擎启动后 WebView 自动加载 `http://127.0.0.1:3080`
+3. 在 Web UI 中配置模型、工具与插件，开始使用
 
-MIT. Contains third-party components under their own licenses (see dependency declarations).
-Design rationale: `docs/design.md`.
+## 运行时快照说明
+
+`app/src/main/assets/snapshot.tar.xz`（~75MB）为内嵌运行时快照，因体积原因未提交到本仓库。构建前需从 [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk) 的 releases 下载 `snapshot-arm64.tar.xz` 放入 assets 目录，并更新 `snapshot.sha256` 指纹。已构建好的 APK（`releases/`）已包含快照，可直接使用。
+
+## 许可证
+
+MIT License。dsh 本体为 MIT 协议；第三方依赖（Termux 运行时、node-pty、bubblewrap 等）均满足分发要求。
